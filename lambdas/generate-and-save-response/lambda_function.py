@@ -4,15 +4,18 @@ import time
 dynamodb = boto3.resource('dynamodb')
 tabela = dynamodb.Table("agent-sessions")
 
+bedrock = boto3.client("bedrock-runtime")
+MODEL_ID = "amazon.nova-micro-v1:0"
+
 
 def lambda_handler(event, context):
     """
     Segundo passo do pipeline (chamado pelo Step Functions).
 
-    - Gera a resposta do "agente" (mockada nesta fase — ver Fase 2 no README
-      para a versão com Amazon Bedrock).
-    - Salva o histórico atualizado da sessão no DynamoDB, com TTL de 24h
-      para expiração automática do estado conversacional.
+    Gera a resposta do agente chamando o Amazon Bedrock (Converse API,
+    modelo Amazon Nova Micro) com o historico completo da sessao, e salva
+    o contexto atualizado no DynamoDB, com TTL de 24h para expiracao
+    automatica do estado conversacional.
     """
     client_id = event["client_id"]
     session_id = event["session_id"]
@@ -21,10 +24,24 @@ def lambda_handler(event, context):
 
     contexto_sessao.append({"role": "user", "text": mensagem_usuario})
 
-    resposta_agente = (
-        f"Recebi sua mensagem: '{mensagem_usuario}'. "
-        "Em breve um agente de IA responderá de verdade."
+    # A Converse API exige os papeis "user" e "assistant" (nao "agent"),
+    # alternados, comecando por "user" -- por isso convertemos aqui.
+    mensagens = []
+    for turno in contexto_sessao:
+        papel = "user" if turno["role"] == "user" else "assistant"
+        mensagens.append({
+            "role": papel,
+            "content": [{"text": turno["text"]}]
+        })
+
+    resposta_bedrock = bedrock.converse(
+        modelId=MODEL_ID,
+        messages=mensagens,
+        inferenceConfig={"maxTokens": 512, "temperature": 0.5}
     )
+
+    resposta_agente = resposta_bedrock["output"]["message"]["content"][0]["text"]
+
     contexto_sessao.append({"role": "agent", "text": resposta_agente})
 
     ttl_expiracao = int(time.time()) + (24 * 60 * 60)

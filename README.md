@@ -1,20 +1,23 @@
-# Pipeline Assíncrono de Agente de IA na AWS (Fase 1 — infraestrutura serverless)
+# Pipeline Assíncrono de Agente de IA na AWS
 
 Infraestrutura assíncrona e desacoplada, no estilo dos webhooks usados por
 plataformas de mensageria (WhatsApp/Meta), para orquestrar o processamento
-de mensagens de um agente conversacional multi-tenant. Construída inteiramente
-no AWS Free Tier.
+de mensagens de um agente conversacional multi-tenant com IA generativa real
+(Amazon Bedrock).
 
 Este é o **Projeto 3** do meu portfólio de Engenharia de Dados/IA na AWS,
 construído para aplicar na prática as ferramentas mais pedidas em vagas de
 Engenheiro(a) de IA com foco em agentes e infraestrutura AWS: Step Functions,
-SQS, SNS, DynamoDB, API Gateway e IAM com permissões de menor privilégio.
+SQS, SNS, DynamoDB, API Gateway, Amazon Bedrock e IAM com permissões de
+menor privilégio.
 
-> **Sobre a resposta do "agente" nesta fase**: a geração da resposta está
-> mockada (retorna um texto fixo) — o foco desta fase é a infraestrutura
-> assíncrona em si (fila, orquestração, estado, notificação), que é o que
-> sustenta um agente de IA real em produção. A Fase 2 (ver seção abaixo)
-> substitui esse mock por uma chamada real ao Amazon Bedrock.
+O projeto foi construído em duas etapas:
+- **Fase 1** — toda a infraestrutura assíncrona (fila, orquestração, estado,
+  notificação), 100% dentro do AWS Free Tier, com a resposta do agente
+  mockada (texto fixo) para validar o fluxo antes de introduzir custo.
+- **Fase 2** — a resposta mockada foi substituída por uma chamada real ao
+  **Amazon Bedrock** (Converse API, modelo Amazon Nova Micro), com custo por
+  token (fora do Free Tier).
 
 ## Arquitetura
 
@@ -42,17 +45,19 @@ Cliente HTTP (curl / WhatsApp / etc.)
 │ start-agent-pipeline  │  a execução do Step Functions
 └────────┬──────────────┘
          ▼
-┌─────────────────────────────────────────────────────────┐
-│              Step Functions: agent-pipeline               │
-│                                                             │
-│  ValidarEBuscarContexto → GerarESalvarResposta → Notificar │
-│   (Lambda)                  (Lambda)              (Lambda) │
-│        │                        │                     │    │
-│        ▼                        ▼                     ▼    │
-│   DynamoDB (GetItem)     DynamoDB (PutItem)      SNS (Publish)
-│   agent-sessions          agent-sessions      agent-response-
-│                                                  notifications
-└─────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│                    Step Functions: agent-pipeline                   │
+│                                                                       │
+│  ValidarEBuscarContexto → GerarESalvarResposta → Notificar          │
+│   (Lambda)                  (Lambda)              (Lambda)          │
+│        │                        │  │                    │           │
+│        ▼                        │  ▼                    ▼           │
+│   DynamoDB (GetItem)            │ Bedrock (Converse)  SNS (Publish) │
+│   agent-sessions                │ amazon.nova-micro   agent-response│
+│                                  ▼                      -notifications
+│                            DynamoDB (PutItem)                       │
+│                            agent-sessions                           │
+└───────────────────────────────────────────────────────────────────┘
                                                        │
                                                        ▼
                                               E-mail de notificação
@@ -69,6 +74,7 @@ Cliente HTTP (curl / WhatsApp / etc.)
 | Buffer/desacoplamento | SQS (`agent-messages-queue`) | Absorve picos e desacopla recepção do processamento |
 | Disparo da orquestração | Lambda (`start-agent-pipeline`) | Consome SQS e inicia a state machine |
 | Orquestração | Step Functions (`agent-pipeline`, Standard) | Encadeia os 3 passos do pipeline |
+| Geração de resposta (IA) | Amazon Bedrock (Converse API, `amazon.nova-micro-v1:0`) | Gera a resposta do agente com base no histórico da sessão |
 | Estado conversacional | DynamoDB (`agent-sessions`) | Multi-tenant (`client_id` + `session_id`), com TTL de 24h |
 | Notificação | SNS (`agent-response-notifications`) | Avisa que a resposta está pronta (e-mail nesta fase) |
 | Permissões | IAM (policies inline por Lambda) | Least privilege — cada função só acessa o que precisa |
@@ -102,14 +108,17 @@ aprendizado, não via IaC (Infrastructure as Code). Para reproduzir:
    `<AWS_ACCOUNT_ID>` para o ID da sua conta.
 3. **IAM**: para cada Lambda, adicione a policy inline correspondente em
    `iam-policies/` à sua role de execução (veja o mapeamento abaixo).
-4. **SNS**: crie o tópico `agent-response-notifications` e assine seu
+4. **Bedrock**: garanta acesso ao modelo `amazon.nova-micro-v1:0` na região
+   `us-east-1` (contas novas da AWS passam por uma verificação automática
+   antes de liberar chamadas ao Bedrock — normalmente resolve em até 2h).
+5. **SNS**: crie o tópico `agent-response-notifications` e assine seu
    e-mail (confirme a assinatura antes de testar).
-5. **Step Functions**: crie a state machine `agent-pipeline` (tipo
+6. **Step Functions**: crie a state machine `agent-pipeline` (tipo
    Standard) usando a definição em `step-functions/agent-pipeline.asl.json`
    (ajuste os ARNs das Lambdas).
-6. **SQS**: crie a fila `agent-messages-queue` (Standard) e adicione-a
+7. **SQS**: crie a fila `agent-messages-queue` (Standard) e adicione-a
    como trigger da Lambda `start-agent-pipeline`.
-7. **API Gateway**: crie uma HTTP API com rota `POST /webhook` integrada
+8. **API Gateway**: crie uma HTTP API com rota `POST /webhook` integrada
    à Lambda `webhook-receiver`, com deploy no stage `$default`.
 
 ### Mapeamento das policies IAM por Lambda
@@ -117,7 +126,7 @@ aprendizado, não via IaC (Infrastructure as Code). Para reproduzir:
 | Lambda | Policy | Motivo |
 |---|---|---|
 | `validate-and-fetch-context` | `dynamodb-getitem.json` | Ler contexto de sessão anterior |
-| `generate-and-save-response` | `dynamodb-putitem.json` | Salvar contexto atualizado |
+| `generate-and-save-response` | `dynamodb-putitem.json` + `bedrock-invokemodel.json` | Salvar contexto atualizado e chamar o modelo de IA |
 | `notify-response` | `sns-publish.json` | Publicar notificação |
 | `start-agent-pipeline` | `sqs-consume.json` + `states-startexecution.json` | Consumir a fila e iniciar a state machine |
 | `webhook-receiver` | `sqs-sendmessage.json` | Enfileirar mensagem recebida |
@@ -189,10 +198,31 @@ requisição, invalidando o JSON. **Correção**: escrever o payload em um
 arquivo (`body.json`) e usar `curl.exe -d "@body.json"`, evitando por
 completo o problema de escaping de aspas do shell.
 
-## Fase 2 (próximos passos, não incluída neste ponto do repositório)
+### 4. Verificação de conta bloqueando o Bedrock (não é bug do código)
 
-Substituir a resposta mockada em `generate-and-save-response` por uma
-chamada real à API Converse do **Amazon Bedrock**, com uma base de
-conhecimento simples (RAG) — este passo tem custo (Bedrock é cobrado por
-token) e por isso foi feito de forma isolada e controlada, fora do escopo
-100% gratuito desta Fase 1.
+Ao chamar `bedrock.converse(...)` pela primeira vez, a conta retornou:
+
+```
+AccessDeniedException: Your account is currently being verified.
+Verification normally takes less than 2 hours...
+```
+
+Esse é um processo automático da AWS para contas que ainda não usaram
+serviços de IA generativa paga (Bedrock) — não está relacionado a
+permissões IAM nem ao código. **Resolução**: aguardar a verificação
+(nesse caso, resolveu dentro da janela informada) e repetir a chamada.
+
+## Fase 2 — Geração de resposta com Amazon Bedrock
+
+A resposta mockada de `generate-and-save-response` foi substituída por uma
+chamada real à **Converse API** do Amazon Bedrock, usando o modelo
+`amazon.nova-micro-v1:0` (escolhido pelo custo baixo por token). O histórico
+completo da sessão (`contexto_sessao`) é convertido para o formato de
+mensagens exigido pela API (papéis `user`/`assistant` alternados) e enviado
+a cada chamada, permitindo respostas com continuidade de contexto
+multi-turno.
+
+Próximo passo natural (fora do escopo deste repositório por enquanto): uma
+base de conhecimento simples via Bedrock Knowledge Bases + Aurora
+Serverless/PgVector para RAG, já que esses serviços têm custo mínimo por
+hora independente de uso.
