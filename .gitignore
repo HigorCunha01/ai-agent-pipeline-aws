@@ -1,0 +1,9 @@
+# Python
+__pycache__/
+*.pyc
+
+# Segurança — nunca versionar credenciais
+.env
+*.pem
+credentials
+body.json
