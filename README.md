@@ -18,6 +18,9 @@ O projeto foi construído em duas etapas:
 - **Fase 2** — a resposta mockada foi substituída por uma chamada real ao
   **Amazon Bedrock** (Converse API, modelo Amazon Nova Micro), com custo por
   token (fora do Free Tier).
+- **Fase 3** — toda a infraestrutura acima foi reescrita como **Terraform**
+  (Infraestrutura como Código), corrigindo inclusive uma lacuna da versão
+  manual (TTL do DynamoDB nunca habilitada de fato). Ver [`terraform/`](./terraform).
 
 ## Arquitetura
 

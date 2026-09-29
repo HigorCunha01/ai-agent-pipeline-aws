@@ -1,0 +1,15 @@
+# Estado local e cache do provider -- nunca versionar (contém segredos
+# em texto plano e é específico da máquina/execução).
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Arquivo de variáveis com dados pessoais (ex: seu e-mail) -- use
+# terraform.tfvars.example como referência e crie o seu próprio local.
+terraform.tfvars
+*.auto.tfvars
+
+# Artefatos de build (zips gerados automaticamente pelo archive_file)
+.build/

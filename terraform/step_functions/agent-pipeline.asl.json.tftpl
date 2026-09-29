@@ -1,0 +1,21 @@
+{
+  "Comment": "Fluxo do agente: validar -> gerar resposta -> notificar",
+  "StartAt": "ValidarEBuscarContexto",
+  "States": {
+    "ValidarEBuscarContexto": {
+      "Type": "Task",
+      "Resource": "${validate_lambda_arn}",
+      "Next": "GerarESalvarResposta"
+    },
+    "GerarESalvarResposta": {
+      "Type": "Task",
+      "Resource": "${generate_lambda_arn}",
+      "Next": "NotificarResposta"
+    },
+    "NotificarResposta": {
+      "Type": "Task",
+      "Resource": "${notify_lambda_arn}",
+      "End": true
+    }
+  }
+}

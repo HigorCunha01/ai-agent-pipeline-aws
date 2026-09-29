@@ -1,0 +1,9 @@
+# Copie este arquivo para terraform.tfvars e preencha com seus dados.
+# terraform.tfvars NÃO é versionado (está no .gitignore) -- fica só na sua máquina.
+
+notification_email = "seu-email@exemplo.com"
+
+# Segredo exigido no header x-webhook-secret para chamar POST /webhook.
+# Gere um valor forte, ex (PowerShell):
+#   -join ((48..57)+(65..90)+(97..122)|Get-Random -Count 40|%{[char]$_})
+webhook_secret = "coloque-aqui-um-valor-aleatorio-forte"
