@@ -72,7 +72,7 @@ Cliente HTTP (curl / WhatsApp / etc.)
 
 | Componente | Serviço AWS | Função |
 |---|---|---|
-| Entrada HTTP | API Gateway (HTTP API) | Expõe `POST /webhook` publicamente |
+| Entrada HTTP | API Gateway (HTTP API) | Expõe `POST /webhook` publicamente, protegido por segredo compartilhado (ver [Segurança do webhook](#segurança-do-webhook)) |
 | Recepção rápida | Lambda (`webhook-receiver`) | Responde 200 e enfileira, sem bloquear o cliente |
 | Buffer/desacoplamento | SQS (`agent-messages-queue`) | Absorve picos e desacopla recepção do processamento |
 | Disparo da orquestração | Lambda (`start-agent-pipeline`) | Consome SQS e inicia a state machine |
@@ -98,6 +98,39 @@ conversas inativas.
 > configuração de TTL do DynamoDB (que faz a exclusão automática de fato)
 > ainda não foi habilitada na tabela — é um ajuste pendente antes de
 > considerar essa expiração como "ativa" em produção.
+
+## Segurança do webhook
+
+A rota `POST /webhook` é pública por natureza — é assim que um webhook real
+de WhatsApp/Meta funciona, a plataforma de mensageria precisa conseguir
+alcançá-la de fora. Isso também significa que qualquer pessoa que descubra
+a URL pode chamá-la, e cada chamada dispara todo o pipeline até o Bedrock
+(que tem custo por token). Por isso a rota exige um **segredo compartilhado**
+no header `x-webhook-secret`: a Lambda `webhook-receiver` valida esse
+header (com comparação resistente a timing attack, via `hmac.compare_digest`)
+antes de sequer enfileirar a mensagem, e responde `401` se estiver ausente
+ou incorreto.
+
+Na versão Terraform, o segredo é passado via variável `webhook_secret`
+(`terraform.tfvars`, nunca commitado) e injetado como variável de ambiente
+da Lambda. Fica de fora do controle de versão e do state do Terraform em
+texto plano no repositório — mas vale lembrar que o `terraform.tfstate`
+sempre grava valores sensíveis em texto plano (a flag `sensitive` só
+mascara a saída do CLI), então esse arquivo também está no `.gitignore`.
+
+Exemplo de chamada autenticada:
+
+```bash
+curl -X POST <webhook_url> \
+  -H "Content-Type: application/json" \
+  -H "x-webhook-secret: <seu-segredo>" \
+  -d '{"client_id": "cliente_1", "session_id": "sessao_1", "message": "oi"}'
+```
+
+Um passo natural além disso (fora do escopo por ora) seria trocar o segredo
+estático por uma verificação de assinatura HMAC por requisição, no mesmo
+padrão que a Meta usa de fato nos webhooks do WhatsApp (header
+`X-Hub-Signature-256`).
 
 ## Setup (reprodução manual, via console AWS)
 

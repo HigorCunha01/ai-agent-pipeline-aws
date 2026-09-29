@@ -32,9 +32,10 @@ já vem habilitada — sem depender de um passo manual esquecível.
 ```bash
 cd terraform
 
-# 1. Configure seu e-mail de notificação
+# 1. Configure seu e-mail de notificação e o segredo do webhook
 cp terraform.tfvars.example terraform.tfvars
-# edite terraform.tfvars com seu e-mail real
+# edite terraform.tfvars: seu e-mail real + um valor forte para webhook_secret
+# (gere um, por ex: openssl rand -hex 20)
 
 # 2. Inicialize (baixa os providers AWS e archive)
 terraform init
@@ -50,11 +51,16 @@ Depois do `apply`:
 
 1. **Confirme a assinatura do SNS** — chega um e-mail da AWS com um link
    de confirmação; sem clicar nele, as notificações não chegam.
-2. O output `webhook_url` mostra a URL pública do endpoint. Teste com:
+2. O output `webhook_url` mostra a URL pública do endpoint. A rota exige o
+   segredo configurado em `webhook_secret` no header `x-webhook-secret` —
+   sem ele, a Lambda responde `401` antes de enfileirar qualquer coisa (ver
+   [Segurança do webhook](../README.md#segurança-do-webhook) no README
+   principal). Teste com:
 
 ```bash
 curl -X POST <webhook_url> \
   -H "Content-Type: application/json" \
+  -H "x-webhook-secret: <seu-segredo>" \
   -d '{"client_id": "cliente_1", "session_id": "sessao_1", "message": "oi"}'
 ```
 
@@ -81,3 +87,4 @@ terraform destroy
 | TTL do DynamoDB | Atributo gravado, mas exclusão automática nunca habilitada | Habilitada por código (`ttl { enabled = true }`) |
 | Permissão do API Gateway para invocar a Lambda | Criada implicitamente pelo console | Declarada explicitamente (`aws_lambda_permission`) |
 | Reprodutibilidade | Manual, sujeita a esquecimento de passos | `terraform apply` recria tudo de forma idêntica |
+| Autenticação do webhook | Rota pública sem autenticação | Segredo compartilhado (`x-webhook-secret`), validado na Lambda antes de enfileirar |
